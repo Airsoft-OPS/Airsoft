@@ -1,0 +1,314 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  ORGANIZER
+  ELITE
+  PREMIUM
+  BASIC
+  FREE
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+}
+
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  FULL
+  CANCELLED
+  COMPLETED
+}
+
+enum RegistrationStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  CANCELLED
+  WAITLISTED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REFUNDED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  MBWAY
+  BANK_TRANSFER
+  CASH
+}
+
+enum FieldType {
+  TEXT
+  NUMBER
+  DATE
+  SELECT
+  MULTISELECT
+  BOOLEAN
+  TEXTAREA
+}
+
+model Tier {
+  id          String   @id @default(cuid())
+  role        UserRole @unique
+  name        String
+  description String
+  price       Float    @default(0)
+  color       String
+  badgeIcon   String
+  isActive    Boolean  @default(true)
+  order       Int      @default(0)
+
+  canAccessExclusiveEvents Boolean @default(false)
+  maxMonthlyRegistrations  Int     @default(3)
+  maxMonthlyReviews        Int     @default(0)
+  hasBadge                 Boolean @default(false)
+  isProfileHighlighted     Boolean @default(false)
+  extraPerms               Json?
+
+  users     User[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model User {
+  id              String     @id @default(cuid())
+  email           String     @unique
+  emailVerified   DateTime?
+  name            String
+  username        String     @unique
+  phone           String?
+  avatarUrl       String?
+  passwordHash    String
+  role            UserRole   @default(FREE)
+  status          UserStatus @default(PENDING_VERIFICATION)
+  airsoftPermitId String     @unique
+  permitVerified  Boolean    @default(false)
+  permitImageUrl  String?
+
+  tierId            String?
+  tier              Tier?      @relation(fields: [tierId], references: [id])
+  subscriptionStart DateTime?
+  subscriptionEnd   DateTime?
+
+  organizedEvents    Event[]         @relation("EventOrganizer")
+  registrations      Registration[]
+  payments           Payment[]
+  reviewsGiven       PlayerReview[]  @relation("ReviewAuthor")
+  reviewsReceived    PlayerReview[]  @relation("ReviewTarget")
+  auditLogs          AuditLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+  @@index([username])
+  @@index([airsoftPermitId])
+}
+
+model PlayerReview {
+  id          String   @id @default(cuid())
+  authorId    String
+  targetId    String
+  rating      Int
+  comment     String?  @db.Text
+  tags        String[]
+  isAnonymous Boolean  @default(false)
+
+  author      User     @relation("ReviewAuthor", fields: [authorId], references: [id])
+  target      User     @relation("ReviewTarget", fields: [targetId], references: [id])
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([authorId, targetId])
+  @@index([targetId])
+  @@index([authorId])
+}
+
+model Event {
+  id               String      @id @default(cuid())
+  slug             String      @unique
+  title            String
+  description      String      @db.Text
+  shortDescription String?
+  coverImageUrl    String?
+  galleryImages    String[]
+  locationName     String
+  locationAddress  String
+  locationCity     String
+  locationCountry  String      @default("PT")
+  latitude         Float?
+  longitude        Float?
+  startDate            DateTime
+  endDate              DateTime
+  registrationDeadline DateTime?
+  maxParticipants     Int
+  currentParticipants Int         @default(0)
+  registrationFee     Float       @default(0)
+  currency            String      @default("EUR")
+  status       EventStatus @default(DRAFT)
+  requiredTier UserRole    @default(FREE)
+  isPublic     Boolean     @default(true)
+  minAge       Int?
+  organizerId  String
+  organizer    User        @relation("EventOrganizer", fields: [organizerId], references: [id])
+  customFields  EventCustomField[]
+  registrations Registration[]
+  payments      Payment[]
+  categories    EventCategory[]
+  tags          EventTag[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([slug])
+  @@index([status])
+  @@index([startDate])
+  @@index([organizerId])
+}
+
+model EventCustomField {
+  id          String    @id @default(cuid())
+  eventId     String
+  event       Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  label       String
+  key         String
+  type        FieldType @default(TEXT)
+  placeholder String?
+  helpText    String?
+  required    Boolean   @default(false)
+  options     String[]
+  order       Int       @default(0)
+  registrationAnswers RegistrationFieldAnswer[]
+
+  @@unique([eventId, key])
+}
+
+model Category {
+  id     String          @id @default(cuid())
+  name   String          @unique
+  slug   String          @unique
+  color  String?
+  events EventCategory[]
+}
+
+model Tag {
+  id     String     @id @default(cuid())
+  name   String     @unique
+  slug   String     @unique
+  events EventTag[]
+}
+
+model EventCategory {
+  eventId    String
+  categoryId String
+  event      Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  @@id([eventId, categoryId])
+}
+
+model EventTag {
+  eventId String
+  tagId   String
+  event   Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  tag     Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  @@id([eventId, tagId])
+}
+
+model Registration {
+  id           String             @id @default(cuid())
+  eventId      String
+  userId       String
+  status       RegistrationStatus @default(PENDING_PAYMENT)
+  notes        String?
+  fieldAnswers RegistrationFieldAnswer[]
+  event        Event   @relation(fields: [eventId], references: [id])
+  user         User    @relation(fields: [userId], references: [id])
+  payment      Payment?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([eventId, userId])
+  @@index([eventId])
+  @@index([userId])
+}
+
+model RegistrationFieldAnswer {
+  id             String           @id @default(cuid())
+  registrationId String
+  customFieldId  String
+  value          String           @db.Text
+  registration   Registration     @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  customField    EventCustomField @relation(fields: [customFieldId], references: [id])
+
+  @@unique([registrationId, customFieldId])
+}
+
+model Payment {
+  id               String        @id @default(cuid())
+  registrationId   String        @unique
+  userId           String
+  eventId          String
+  amount           Float
+  currency         String        @default("EUR")
+  method           PaymentMethod @default(MBWAY)
+  status           PaymentStatus @default(PENDING)
+  mbwayPhone        String?
+  mbwayAlias        String?
+  mbwayRequestId    String?
+  externalReference String?
+  paidAt            DateTime?
+  refundedAt        DateTime?
+  failureReason     String?
+  metadata          Json?
+  registration      Registration  @relation(fields: [registrationId], references: [id])
+  user              User          @relation(fields: [userId], references: [id])
+  event             Event         @relation(fields: [eventId], references: [id])
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([status])
+  @@index([userId])
+  @@index([eventId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  entity    String?
+  entityId  String?
+  metadata  Json?
+  ipAddress String?
+  userAgent String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model SiteSettings {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String   @db.Text
+  description String?
+  updatedAt   DateTime @updatedAt
+}
